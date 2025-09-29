@@ -10,6 +10,7 @@ import { MercadoPagoConfig, Preference } from "mercadopago";
 import dotenv from "dotenv";
 import pg from "pg";
 
+
 // NOVAS IMPORTAÇÕES PARA O GRÁFICO
 import { SimpleLinearRegression } from "ml-regression";
 import { ChartJSNodeCanvas } from "chartjs-node-canvas";
@@ -398,60 +399,81 @@ app.get("/jogadoras/:id/stats-fisicas", async (req, res) => {
   }
 });
 
+// ==============================================================================
+// ===== ENDPOINT DO GRÁFICO ATUALIZADO E DINÂMICO ==============================
+// ==============================================================================
 app.get("/math-stats-image", async (req, res) => {
   try {
+    // 1. Busca os dados REAIS da jogadora com ID 1
+    const statsResult = await db.query('SELECT passos_total, distancia_km FROM jogadoras WHERE id = 1');
+    
+    if (statsResult.rows.length === 0) {
+        return res.status(404).json({ message: "Estatísticas da jogadora 1 não encontradas." });
+    }
+    
+    const { passos_total, distancia_km } = statsResult.rows[0];
+
+    // 2. Cria dados de simulação baseados nos dados reais
+    // Usaremos 'passos' como nosso eixo X e 'distância' como nosso eixo Y
     const x = [];
     const y = [];
+    // Gera 50 pontos de dados "falsos" em torno do valor real para criar um scatter plot
     for (let i = 0; i < 50; i++) {
-      const randomX = Math.random() * 10;
-      x.push(randomX);
-      y.push(2 * randomX + 1 + (Math.random() - 0.5) * 4);
+        const randomX = passos_total * (0.8 + Math.random() * 0.4); // Variação de 20%
+        x.push(randomX);
+        const randomY = distancia_km * (0.8 + Math.random() * 0.4); // Variação de 20%
+        y.push(randomY);
     }
+
+    // Adiciona o ponto real para garantir que ele esteja no gráfico
+    x.push(passos_total);
+    y.push(distancia_km);
+
+    // 3. Modelo de Regressão Linear
     const regression = new SimpleLinearRegression(x, y);
-    const linePoints = x
-      .sort((a, b) => a - b)
-      .map((val) => ({ x: val, y: regression.predict(val) }));
+    const linePoints = x.sort((a, b) => a - b).map(val => ({ x: val, y: regression.predict(val) }));
+
+    // 4. Geração do Gráfico com Estilo Melhorado
     const width = 800;
     const height = 480;
-    const chartJSNodeCanvas = new ChartJSNodeCanvas({
-      width,
-      height,
-      backgroundColour: "white",
-    });
+    const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height, backgroundColour: '#F9FAFB' }); // Fundo cinza claro
+    
     const configuration = {
-      type: "scatter",
+      type: 'scatter',
       data: {
         datasets: [
           {
-            label: "Dados Reais",
+            label: 'Performance Simulado por Jogo',
             data: x.map((val, i) => ({ x: val, y: y[i] })),
-            backgroundColor: "rgba(54, 162, 235, 0.6)",
+            backgroundColor: 'rgba(139, 92, 246, 0.6)', // Roxo
           },
           {
-            label: "Linha de Regressão",
+            label: 'Linha de Tendência (Regressão)',
             data: linePoints,
-            type: "line",
-            borderColor: "rgba(255, 99, 132, 1)",
+            type: 'line',
+            borderColor: 'rgba(236, 72, 153, 1)', // Rosa
+            borderWidth: 2,
             fill: false,
             pointRadius: 0,
           },
         ],
       },
       options: {
-        scales: {
-          x: {
-            title: { display: true, text: "Métricas (Ex: Minutos Jogados)" },
-          },
-          y: { title: { display: true, text: "Pontuação" } },
-        },
         plugins: {
-          title: { display: true, text: "Análise de Desempenho da Jogadora" },
+            title: { display: true, text: 'Análise de Desempenho Físico (IoT)', font: { size: 20, weight: 'bold' } },
+            legend: { position: 'bottom' }
+        },
+        scales: {
+          x: { title: { display: true, text: 'Passos Totais na Partida', font: { size: 14 } } },
+          y: { title: { display: true, text: 'Distância Percorrida (km)', font: { size: 14 } } },
         },
       },
     };
+
     const imageBuffer = await chartJSNodeCanvas.renderToBuffer(configuration);
-    res.setHeader("Content-Type", "image/png");
+    res.setHeader('Content-Type', 'image/png');
     res.send(imageBuffer);
+
   } catch (error) {
     console.error("Erro ao gerar o gráfico de análise:", error);
     res.status(500).json({ message: "Erro ao gerar gráfico." });
