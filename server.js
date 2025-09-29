@@ -1,3 +1,5 @@
+// server.js COMPLETO e CORRIGIDO para PostgreSQL
+
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcrypt";
@@ -53,7 +55,6 @@ const upload = multer({ storage: storage });
 // ==============================================================================
 
 app.post("/create_preference", async (req, res) => {
-  // ... (código do Mercado Pago sem alterações)
   const { cartItems } = req.body;
   try {
     const client = new MercadoPagoConfig({
@@ -217,7 +218,6 @@ app.post("/cadastrar", async (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  // ... (código de login sem alterações)
   const { email, senha } = req.body;
   if (!email || !senha) {
     return res.status(400).json({ message: "Email e senha são obrigatórios." });
@@ -260,7 +260,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Endpoint para o usuário salvar sua escalação
 app.post("/escalacao", async (req, res) => {
   const { email, team } = req.body;
   if (!email || !team) {
@@ -281,9 +280,7 @@ app.post("/escalacao", async (req, res) => {
   }
 });
 
-// --- LÓGICA DE MERCADO E RANKING ---
 app.post("/mercado/status", async (req, res) => {
-  // ... (lógica completa do mercado, já convertida para pg)
   const { status } = req.body;
   if (status !== "aberto" && status !== "fechado") {
     return res.status(400).json({ message: "Status inválido." });
@@ -295,10 +292,6 @@ app.post("/mercado/status", async (req, res) => {
       await client.query("UPDATE mercado_status SET status = $1 WHERE id = 1", [
         "fechado",
       ]);
-      await client.query("COMMIT");
-      res
-        .status(200)
-        .json({ message: "Mercado fechado! As escalações estão travadas." });
     } else {
       const usuariosResult = await client.query(
         "SELECT id, escalacao_atual FROM usuarios WHERE escalacao_atual IS NOT NULL"
@@ -329,13 +322,13 @@ app.post("/mercado/status", async (req, res) => {
       await client.query("UPDATE mercado_status SET status = $1 WHERE id = 1", [
         "aberto",
       ]);
-      await client.query("COMMIT");
-      res
-        .status(200)
-        .json({
-          message: "Ranking atualizado! Mercado aberto para a nova rodada.",
-        });
     }
+    await client.query("COMMIT");
+    const message =
+      status === "fechado"
+        ? "Mercado fechado! As escalações estão travadas."
+        : "Ranking atualizado! Mercado aberto para a nova rodada.";
+    res.status(200).json({ message });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Erro ao processar o mercado:", error);
@@ -367,7 +360,6 @@ app.get("/ranking", async (req, res) => {
   }
 });
 
-// --- ENDPOINTS PARA O SERVIÇO DE IOT ---
 app.post("/jogadoras/:id/stats-fisicas", async (req, res) => {
   const { id } = req.params;
   const { passos, distanciaMetros } = req.body;
@@ -406,7 +398,6 @@ app.get("/jogadoras/:id/stats-fisicas", async (req, res) => {
   }
 });
 
-// --- ENDPOINT PARA GERAR GRÁFICO EM JS ---
 app.get("/math-stats-image", async (req, res) => {
   try {
     const x = [];
