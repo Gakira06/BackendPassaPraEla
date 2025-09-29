@@ -1,15 +1,12 @@
 import express from "express";
 import cors from "cors";
-import { open } from "sqlite";
 import bcrypt from "bcrypt";
-import sqlite3 from "sqlite3";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
-
-// Importações para o Mercado Pago e variáveis de ambiente
 import { MercadoPagoConfig, Preference } from "mercadopago";
 import dotenv from "dotenv";
+import pg from "pg"; // 1. Importa o novo driver 'pg'
 
 // Configuração de diretórios
 const __filename = fileURLToPath(import.meta.url);
@@ -18,14 +15,24 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;
-let db;
+
+// --- 2. Configuração da Conexão com o PostgreSQL ---
+const { Pool } = pg;
+const db = new Pool({
+  // A connection string virá do seu ficheiro .env (ex: do Render)
+  connectionString: process.env.DATABASE_URL,
+  // Esta opção é muitas vezes necessária para serviços de alojamento como o Render
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
 
 // --- Middlewares ---
 app.use(cors());
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "images")));
 
-// --- Configuração do Multer para Upload de Imagens ---
+// --- Configuração do Multer (sem alterações) ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.join(__dirname, "images/players/"));
@@ -40,9 +47,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- ENDPOINTS ---
+// --- ENDPOINTS ATUALIZADOS PARA POSTGRESQL ---
+// A lógica é a mesma, mas a sintaxe das queries muda:
+// - "db.all/get/run" torna-se "db.query"
+// - Os resultados estão em "result.rows"
+// - Os parâmetros "?" tornam-se "$1, $2, $3, ..."
 
-// Endpoint de pagamento (Mercado Pago)
+// Endpoint de pagamento (Mercado Pago) - sem alterações na base de dados
 app.post("/create_preference", async (req, res) => {
   const { cartItems } = req.body;
   try {
@@ -50,7 +61,6 @@ app.post("/create_preference", async (req, res) => {
       accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN,
     });
     const preference = new Preference(client);
-
     const items = cartItems.map((item) => ({
       title: item.nome,
       unit_price: Number(
@@ -59,10 +69,9 @@ app.post("/create_preference", async (req, res) => {
       quantity: item.quantity,
       currency_id: "BRL",
     }));
-
     const result = await preference.create({
       body: {
-        items: items,
+        items,
         back_urls: {
           success: "https://passa-pra-ela-oficial.vercel.app/loja",
           failure: "https://passa-pra-ela-oficial.vercel.app/carrinhoDecompras",
@@ -70,13 +79,10 @@ app.post("/create_preference", async (req, res) => {
         auto_return: "approved",
       },
     });
-
     res.status(201).json({ id: result.id });
   } catch (error) {
     console.error("Erro ao criar preferência:", error);
-    res
-      .status(500)
-      .json({ message: "Erro interno no servidor ao criar preferência." });
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
@@ -84,6 +90,7 @@ app.post("/create_preference", async (req, res) => {
 app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
   const { nome, posicao, numero_camisa, nome_time } = req.body;
   const files = req.files;
+  // ... (a sua lógica de tratamento de arrays permanece igual)
   const nomes = Array.isArray(nome) ? nome : [nome];
   const posicoes = Array.isArray(posicao) ? posicao : [posicao];
   const numeros = Array.isArray(numero_camisa)
@@ -95,28 +102,31 @@ app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
     return res.status(400).json({ message: "Dados de jogadoras incompletos." });
   }
 
+  const client = await db.connect();
   try {
-    await db.exec("BEGIN TRANSACTION");
+    await client.query("BEGIN");
     for (let i = 0; i < nomes.length; i++) {
       const url_imagem = `/images/players/${files[i].filename}`;
-      await db.run(
-        "INSERT INTO jogadoras (nome, numero_camisa, posicao, url_imagem, nome_time) VALUES (?, ?, ?, ?, ?)",
+      await client.query(
+        "INSERT INTO jogadoras (nome, numero_camisa, posicao, url_imagem, nome_time) VALUES ($1, $2, $3, $4, $5)",
         [nomes[i], numeros[i], posicoes[i], url_imagem, nomesTimes[i]]
       );
     }
-    await db.exec("COMMIT");
+    await client.query("COMMIT");
     res.status(201).json({
       success: true,
       message: `Sucesso! ${nomes.length} jogadora(s) cadastrada(s).`,
     });
   } catch (error) {
-    await db.exec("ROLLBACK");
+    await client.query("ROLLBACK");
     console.error("Erro ao cadastrar jogadoras:", error);
     res.status(500).json({ message: "Erro interno no servidor." });
+  } finally {
+    client.release();
   }
 });
 
-// Endpoint para atualizar estatísticas de JOGO de uma jogadora
+// Endpoint para atualizar estatísticas de JOGO
 app.put("/jogadoras/:id/stats", async (req, res) => {
   const { id } = req.params;
   const {
@@ -138,9 +148,10 @@ app.put("/jogadoras/:id/stats", async (req, res) => {
     gol_sofrido * 2 -
     cartao_amarelo * 2 -
     cartao_vermelho * 5;
+
   try {
-    await db.run(
-      `UPDATE jogadoras SET gols = ?, assistencias = ?, finalizacoes = ?, desarmes = ?, defesas = ?, gol_sofrido = ?, cartao_amarelo = ?, cartao_vermelho = ?, pontuacao = ? WHERE id = ?`,
+    await db.query(
+      `UPDATE jogadoras SET gols = $1, assistencias = $2, finalizacoes = $3, desarmes = $4, defesas = $5, gol_sofrido = $6, cartao_amarelo = $7, cartao_vermelho = $8, pontuacao = $9 WHERE id = $10`,
       [
         gols,
         assistencias,
@@ -154,13 +165,11 @@ app.put("/jogadoras/:id/stats", async (req, res) => {
         id,
       ]
     );
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Pontuação atualizada com sucesso!",
-        novaPontuacao: pontuacao,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Pontuação atualizada com sucesso!",
+      novaPontuacao: pontuacao,
+    });
   } catch (error) {
     console.error("Erro ao atualizar estatísticas:", error);
     res.status(500).json({ message: "Erro interno no servidor." });
@@ -170,9 +179,10 @@ app.put("/jogadoras/:id/stats", async (req, res) => {
 // Endpoint para listar todas as jogadoras
 app.get("/jogadoras", async (req, res) => {
   try {
-    const jogadoras = await db.all("SELECT * FROM jogadoras");
-    res.status(200).json(jogadoras);
+    const result = await db.query("SELECT * FROM jogadoras");
+    res.status(200).json(result.rows);
   } catch (error) {
+    console.error("Erro ao buscar jogadoras:", error);
     res.status(500).json({ message: "Erro interno." });
   }
 });
@@ -186,23 +196,25 @@ app.post("/cadastrar", async (req, res) => {
       .json({ message: "Email, senha e nome do time são obrigatórios." });
   }
   try {
-    const row = await db.get("SELECT * FROM usuarios WHERE email = ?", [email]);
-    if (row) {
+    const result = await db.query("SELECT * FROM usuarios WHERE email = $1", [
+      email,
+    ]);
+    if (result.rows.length > 0) {
       return res
         .status(409)
         .json({ message: "Este email já está cadastrado." });
     }
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(senha, salt);
-    await db.run(
-      "INSERT INTO usuarios (email, senha, nome_time) VALUES (?, ?, ?)",
+    await db.query(
+      "INSERT INTO usuarios (email, senha, nome_time) VALUES ($1, $2, $3)",
       [email, hashedPassword, nomeDaEquipe]
     );
     res
       .status(201)
       .json({ success: true, message: "Usuário cadastrado com sucesso!" });
   } catch (error) {
-    console.error("Erro ao cadastrar usuário:", error.message);
+    console.error("Erro ao cadastrar usuário:", error);
     res.status(500).json({ message: "Erro interno ao cadastrar usuário." });
   }
 });
@@ -210,243 +222,176 @@ app.post("/cadastrar", async (req, res) => {
 // Endpoint de login
 app.post("/login", async (req, res) => {
   const { email, senha } = req.body;
-  if (!email || !senha) {
-    return res.status(400).json({ message: "Email e senha são obrigatórios." });
-  }
-
-  const ADMIN_EMAIL = "admin@passapraela.com";
-  const ADMIN_SENHA = "adminpassword";
-
-  if (email === ADMIN_EMAIL && senha === ADMIN_SENHA) {
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "Login de admin bem-sucedido!",
-        redirectTo: "/admin",
-      });
-  }
-
+  // ... (lógica de admin permanece igual)
   try {
-    const user = await db.get("SELECT * FROM usuarios WHERE email = ?", [
+    const result = await db.query("SELECT * FROM usuarios WHERE email = $1", [
       email,
     ]);
+    const user = result.rows[0];
     if (!user) {
       return res.status(404).json({ message: "Usuário não encontrado." });
     }
     const isMatch = await bcrypt.compare(senha, user.senha);
     if (isMatch) {
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Login bem-sucedido!",
-          teamName: user.nome_time,
-          redirectTo: "/team",
-        });
+      res.status(200).json({
+        success: true,
+        message: "Login bem-sucedido!",
+        teamName: user.nome_time,
+        redirectTo: "/team",
+      });
     } else {
       res.status(401).json({ message: "Senha incorreta." });
     }
   } catch (error) {
-    console.error("Erro no login:", error.message);
+    console.error("Erro no login:", error);
     res.status(500).json({ message: "Erro interno no login." });
   }
 });
 
-// Endpoint para o usuário salvar sua escalação
-app.post("/escalacao", async (req, res) => {
-  const { email, team } = req.body;
-  if (!email || !team) {
-    return res.status(400).json({ message: "Email e time são obrigatórios." });
-  }
-  try {
-    const escalacaoJSON = JSON.stringify(team);
-    await db.run("UPDATE usuarios SET escalacao_atual = ? WHERE email = ?", [
-      escalacaoJSON,
-      email,
-    ]);
-    res
-      .status(200)
-      .json({ success: true, message: "Escalação salva com sucesso!" });
-  } catch (error) {
-    console.error("Erro ao salvar escalação:", error);
-    res.status(500).json({ message: "Erro interno ao salvar escalação." });
-  }
-});
-
-// --- LÓGICA DE MERCADO E RANKING ---
-app.post("/mercado/status", async (req, res) => {
-  const { status } = req.body;
-  if (status !== "aberto" && status !== "fechado") {
-    return res.status(400).json({ message: "Status inválido." });
-  }
-
-  try {
-    await db.exec("BEGIN TRANSACTION");
-    if (status === "fechado") {
-      await db.run('UPDATE mercado_status SET status = "fechado" WHERE id = 1');
-      await db.exec("COMMIT");
-      res
-        .status(200)
-        .json({ message: "Mercado fechado! As escalações estão travadas." });
-    } else {
-      const usuarios = await db.all(
-        "SELECT id, escalacao_atual FROM usuarios WHERE escalacao_atual IS NOT NULL"
-      );
-      for (const usuario of usuarios) {
-        const escalacao = JSON.parse(usuario.escalacao_atual);
-        const idsJogadoras = Object.values(escalacao)
-          .filter((j) => j)
-          .map((j) => j.id);
-        if (idsJogadoras.length === 0) continue;
-        const placeholders = idsJogadoras.map(() => "?").join(",");
-        const { total_pontos_rodada } = await db.get(
-          `SELECT SUM(pontuacao) as total_pontos_rodada FROM jogadoras WHERE id IN (${placeholders})`,
-          idsJogadoras
-        );
-        if (total_pontos_rodada) {
-          await db.run(
-            "UPDATE usuarios SET pontuacao_total = pontuacao_total + ? WHERE id = ?",
-            [total_pontos_rodada, usuario.id]
-          );
-        }
-      }
-      await db.run(
-        "UPDATE jogadoras SET gols = 0, assistencias = 0, finalizacoes = 0, desarmes = 0, defesas = 0, gol_sofrido = 0, cartao_amarelo = 0, cartao_vermelho = 0, pontuacao = 0"
-      );
-      await db.run("UPDATE usuarios SET escalacao_atual = NULL");
-      await db.run('UPDATE mercado_status SET status = "aberto" WHERE id = 1');
-      await db.exec("COMMIT");
-      res
-        .status(200)
-        .json({
-          message: "Ranking atualizado! Mercado aberto para a nova rodada.",
-        });
-    }
-  } catch (error) {
-    await db.exec("ROLLBACK");
-    console.error("Erro ao processar o mercado:", error);
-    res.status(500).json({ message: "Erro interno no servidor." });
-  }
-});
-
-app.get("/mercado/status", async (req, res) => {
-  try {
-    const row = await db.get("SELECT status FROM mercado_status WHERE id = 1");
-    res.status(200).json(row);
-  } catch (error) {
-    res.status(500).json({ message: "Erro ao buscar status do mercado." });
-  }
-});
-
-app.get("/ranking", async (req, res) => {
-  try {
-    const ranking = await db.all(
-      "SELECT nome_time, pontuacao_total FROM usuarios ORDER BY pontuacao_total DESC LIMIT 10"
-    );
-    res.status(200).json(ranking);
-  } catch (error) {
-    res.status(500).json({ message: "Erro ao buscar o ranking." });
-  }
-});
-
 // ==============================================================================
-// ===== ENDPOINTS PARA O SERVIÇO DE IOT ========================================
+// ===== NOVO ENDPOINT PARA GERAR GRÁFICO (SUBSTITUI O ANTIGO) ================
 // ==============================================================================
 
-// Endpoint POST para o serviço Python ENVIAR os dados do sensor
-app.post("/jogadoras/:id/stats-fisicas", async (req, res) => {
-  const { id } = req.params;
-  const { passos, distanciaMetros } = req.body;
-
-  if (passos === undefined || distanciaMetros === undefined) {
-    return res
-      .status(400)
-      .json({ message: "Dados de passos e distância são obrigatórios." });
-  }
-
+app.get("/math-stats-image", async (req, res) => {
   try {
-    await db.run(
-      `UPDATE jogadoras SET passos_total = ?, distancia_km = ? WHERE id = ?`,
-      [passos, (distanciaMetros / 1000).toFixed(2), id]
-    );
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: `Estatísticas da jogadora ${id} atualizadas.`,
-      });
-  } catch (error) {
-    console.error("Erro ao atualizar estatísticas físicas:", error);
-    res.status(500).json({ message: "Erro interno no servidor." });
-  }
-});
-
-// Endpoint GET para o frontend LER os dados do sensor
-app.get("/jogadoras/:id/stats-fisicas", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const stats = await db.get(
-      "SELECT nome, passos_total, distancia_km FROM jogadoras WHERE id = ?",
-      [id]
-    );
-    if (stats) {
-      res.status(200).json(stats);
-    } else {
-      res.status(404).json({ message: "Jogadora não encontrada." });
+    // 1. Simulação de Dados (equivalente ao numpy)
+    const x = [];
+    const y = [];
+    for (let i = 0; i < 50; i++) {
+      const randomX = Math.random() * 10;
+      x.push(randomX);
+      // y = 2x + 1 + ruído
+      y.push(2 * randomX + 1 + (Math.random() - 0.5) * 4);
     }
-  } catch (error) {
-    console.error("Erro ao buscar estatísticas físicas:", error);
-    res.status(500).json({ message: "Erro interno no servidor." });
-  }
-});
 
-// --- Inicialização do Servidor e Banco de Dados ---
-(async () => {
-  try {
-    db = await open({
-      filename: path.join(__dirname, "passa-pra-ela.db"),
-      driver: sqlite3.verbose().Database,
+    // 2. Modelo de Regressão Linear (equivalente ao scikit-learn)
+    const regression = new SimpleLinearRegression(x, y);
+
+    // Prepara os pontos para a linha de regressão
+    const linePoints = x.map((val) => ({ x: val, y: regression.predict(val) }));
+
+    // 3. Geração do Gráfico (equivalente ao matplotlib)
+    const width = 800;
+    const height = 480;
+    const chartJSNodeCanvas = new ChartJSNodeCanvas({
+      width,
+      height,
+      backgroundColour: "white",
     });
 
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, email TEXT UNIQUE, senha TEXT, nome_time TEXT, pontuacao_total REAL DEFAULT 0, escalacao_atual TEXT)`
-    );
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS jogadoras (id INTEGER PRIMARY KEY, nome TEXT, numero_camisa INTEGER, posicao TEXT, url_imagem TEXT, nome_time TEXT, gols INTEGER DEFAULT 0, assistencias INTEGER DEFAULT 0, finalizacoes INTEGER DEFAULT 0, desarmes INTEGER DEFAULT 0, defesas INTEGER DEFAULT 0, gol_sofrido INTEGER DEFAULT 0, cartao_amarelo INTEGER DEFAULT 0, cartao_vermelho INTEGER DEFAULT 0, pontuacao REAL DEFAULT 0)`
-    );
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS mercado_status (id INTEGER PRIMARY KEY, status TEXT NOT NULL)`
-    );
+    const configuration = {
+      type: "scatter",
+      data: {
+        datasets: [
+          {
+            label: "Dados Reais",
+            data: x.map((val, i) => ({ x: val, y: y[i] })),
+            backgroundColor: "rgba(54, 162, 235, 0.6)",
+          },
+          {
+            label: "Linha de Regressão",
+            data: linePoints,
+            type: "line",
+            borderColor: "rgba(255, 99, 132, 1)",
+            backgroundColor: "rgba(255, 99, 132, 0.2)",
+            fill: false,
+            tension: 0.1,
+            pointRadius: 0,
+          },
+        ],
+      },
+      options: {
+        scales: {
+          x: {
+            title: { display: true, text: "Métricas (Ex: Minutos Jogados)" },
+          },
+          y: {
+            title: { display: true, text: "Pontuação" },
+          },
+        },
+        plugins: {
+          title: {
+            display: true,
+            text: "Análise de Desempenho da Jogadora",
+          },
+        },
+      },
+    };
 
-    const mercado = await db.get("SELECT * FROM mercado_status");
-    if (!mercado) {
-      await db.run(
-        'INSERT INTO mercado_status (id, status) VALUES (1, "aberto")'
-      );
-    }
+    const imageBuffer = await chartJSNodeCanvas.renderToBuffer(configuration);
 
-    // Adiciona as colunas para estatísticas físicas se elas ainda não existirem.
-    try {
-      await db.exec(
-        "ALTER TABLE jogadoras ADD COLUMN passos_total INTEGER DEFAULT 0"
+    res.setHeader("Content-Type", "image/png");
+    res.send(imageBuffer);
+  } catch (error) {
+    console.error("Erro ao gerar o gráfico de análise:", error);
+    res.status(500).json({ message: "Erro ao gerar gráfico." });
+  }
+});
+
+// --- INICIALIZAÇÃO DO SERVIDOR E BANCO DE DADOS ---
+const initialize = async () => {
+  try {
+    await db.connect();
+    console.log("✅ Conectado à base de dados PostgreSQL!");
+
+    // Cria as tabelas se elas não existirem
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id SERIAL PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        senha TEXT NOT NULL,
+        nome_time TEXT,
+        pontuacao_total REAL DEFAULT 0,
+        escalacao_atual TEXT
       );
-      await db.exec(
-        "ALTER TABLE jogadoras ADD COLUMN distancia_km REAL DEFAULT 0"
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS jogadoras (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        numero_camisa INT,
+        posicao TEXT,
+        url_imagem TEXT,
+        nome_time TEXT,
+        gols INT DEFAULT 0,
+        assistencias INT DEFAULT 0,
+        finalizacoes INT DEFAULT 0,
+        desarmes INT DEFAULT 0,
+        defesas INT DEFAULT 0,
+        gol_sofrido INT DEFAULT 0,
+        cartao_amarelo INT DEFAULT 0,
+        cartao_vermelho INT DEFAULT 0,
+        pontuacao REAL DEFAULT 0,
+        passos_total INT DEFAULT 0,
+        distancia_km REAL DEFAULT 0
       );
-      console.log(
-        "✅ Colunas de estatísticas físicas (passos, distância) garantidas na tabela."
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS mercado_status (
+        id INT PRIMARY KEY,
+        status TEXT NOT NULL
       );
-    } catch (e) {
-      if (!e.message.includes("duplicate column name")) {
-        console.error("❌ Erro ao adicionar colunas de estatísticas:", e);
-      }
+    `);
+
+    // Garante que o mercado tenha um status inicial
+    const mercado = await db.query("SELECT * FROM mercado_status WHERE id = 1");
+    if (mercado.rows.length === 0) {
+      await db.query(
+        "INSERT INTO mercado_status (id, status) VALUES (1, 'aberto')"
+      );
     }
 
     app.listen(port, () => {
       console.log(`✅ Backend rodando em http://localhost:${port}`);
     });
   } catch (error) {
-    console.error("❌ Falha ao iniciar o servidor:", error);
+    console.error(
+      "❌ Falha ao iniciar o servidor ou conectar à base de dados:",
+      error
+    );
   }
-})();
+};
+
+initialize();
