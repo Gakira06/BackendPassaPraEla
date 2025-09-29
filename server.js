@@ -6,9 +6,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { MercadoPagoConfig, Preference } from "mercadopago";
 import dotenv from "dotenv";
-import pg from "pg"; // 1. Importa o novo driver 'pg'
+import pg from "pg";
 
-// Configuração de diretórios
+// NOVAS IMPORTAÇÕES PARA O GRÁFICO
+import { SimpleLinearRegression } from "ml-regression";
+import { ChartJSNodeCanvas } from "chartjs-node-canvas";
+
+// --- Configurações Iniciais ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config();
@@ -16,12 +20,10 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 
-// --- 2. Configuração da Conexão com o PostgreSQL ---
+// --- Configuração da Conexão com o PostgreSQL ---
 const { Pool } = pg;
 const db = new Pool({
-  // A connection string virá do seu ficheiro .env (ex: do Render)
   connectionString: process.env.DATABASE_URL,
-  // Esta opção é muitas vezes necessária para serviços de alojamento como o Render
   ssl: {
     rejectUnauthorized: false,
   },
@@ -32,11 +34,10 @@ app.use(cors());
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "images")));
 
-// --- Configuração do Multer (sem alterações) ---
+// --- Configuração do Multer ---
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, "images/players/"));
-  },
+  destination: (req, file, cb) =>
+    cb(null, path.join(__dirname, "images/players/")),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     cb(
@@ -47,14 +48,12 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- ENDPOINTS ATUALIZADOS PARA POSTGRESQL ---
-// A lógica é a mesma, mas a sintaxe das queries muda:
-// - "db.all/get/run" torna-se "db.query"
-// - Os resultados estão em "result.rows"
-// - Os parâmetros "?" tornam-se "$1, $2, $3, ..."
+// ==============================================================================
+// ===== ENDPOINTS COMPLETOS E ADAPTADOS PARA POSTGRESQL ========================
+// ==============================================================================
 
-// Endpoint de pagamento (Mercado Pago) - sem alterações na base de dados
 app.post("/create_preference", async (req, res) => {
+  // ... (código do Mercado Pago sem alterações)
   const { cartItems } = req.body;
   try {
     const client = new MercadoPagoConfig({
@@ -86,11 +85,9 @@ app.post("/create_preference", async (req, res) => {
   }
 });
 
-// Endpoint para cadastrar novas jogadoras
 app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
   const { nome, posicao, numero_camisa, nome_time } = req.body;
   const files = req.files;
-  // ... (a sua lógica de tratamento de arrays permanece igual)
   const nomes = Array.isArray(nome) ? nome : [nome];
   const posicoes = Array.isArray(posicao) ? posicao : [posicao];
   const numeros = Array.isArray(numero_camisa)
@@ -113,10 +110,12 @@ app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
       );
     }
     await client.query("COMMIT");
-    res.status(201).json({
-      success: true,
-      message: `Sucesso! ${nomes.length} jogadora(s) cadastrada(s).`,
-    });
+    res
+      .status(201)
+      .json({
+        success: true,
+        message: `Sucesso! ${nomes.length} jogadora(s) cadastrada(s).`,
+      });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Erro ao cadastrar jogadoras:", error);
@@ -126,7 +125,6 @@ app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
   }
 });
 
-// Endpoint para atualizar estatísticas de JOGO
 app.put("/jogadoras/:id/stats", async (req, res) => {
   const { id } = req.params;
   const {
@@ -148,7 +146,6 @@ app.put("/jogadoras/:id/stats", async (req, res) => {
     gol_sofrido * 2 -
     cartao_amarelo * 2 -
     cartao_vermelho * 5;
-
   try {
     await db.query(
       `UPDATE jogadoras SET gols = $1, assistencias = $2, finalizacoes = $3, desarmes = $4, defesas = $5, gol_sofrido = $6, cartao_amarelo = $7, cartao_vermelho = $8, pontuacao = $9 WHERE id = $10`,
@@ -165,18 +162,19 @@ app.put("/jogadoras/:id/stats", async (req, res) => {
         id,
       ]
     );
-    res.status(200).json({
-      success: true,
-      message: "Pontuação atualizada com sucesso!",
-      novaPontuacao: pontuacao,
-    });
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: "Pontuação atualizada com sucesso!",
+        novaPontuacao: pontuacao,
+      });
   } catch (error) {
     console.error("Erro ao atualizar estatísticas:", error);
     res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
-// Endpoint para listar todas as jogadoras
 app.get("/jogadoras", async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM jogadoras");
@@ -187,7 +185,6 @@ app.get("/jogadoras", async (req, res) => {
   }
 });
 
-// Endpoint de cadastro de usuário
 app.post("/cadastrar", async (req, res) => {
   const { email, senha, nomeDaEquipe } = req.body;
   if (!email || !senha || !nomeDaEquipe) {
@@ -219,10 +216,23 @@ app.post("/cadastrar", async (req, res) => {
   }
 });
 
-// Endpoint de login
 app.post("/login", async (req, res) => {
+  // ... (código de login sem alterações)
   const { email, senha } = req.body;
-  // ... (lógica de admin permanece igual)
+  if (!email || !senha) {
+    return res.status(400).json({ message: "Email e senha são obrigatórios." });
+  }
+  const ADMIN_EMAIL = "admin@passapraela.com";
+  const ADMIN_SENHA = "adminpassword";
+  if (email === ADMIN_EMAIL && senha === ADMIN_SENHA) {
+    return res
+      .status(200)
+      .json({
+        success: true,
+        message: "Login de admin bem-sucedido!",
+        redirectTo: "/admin",
+      });
+  }
   try {
     const result = await db.query("SELECT * FROM usuarios WHERE email = $1", [
       email,
@@ -233,12 +243,14 @@ app.post("/login", async (req, res) => {
     }
     const isMatch = await bcrypt.compare(senha, user.senha);
     if (isMatch) {
-      res.status(200).json({
-        success: true,
-        message: "Login bem-sucedido!",
-        teamName: user.nome_time,
-        redirectTo: "/team",
-      });
+      res
+        .status(200)
+        .json({
+          success: true,
+          message: "Login bem-sucedido!",
+          teamName: user.nome_time,
+          redirectTo: "/team",
+        });
     } else {
       res.status(401).json({ message: "Senha incorreta." });
     }
@@ -248,29 +260,166 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ==============================================================================
-// ===== NOVO ENDPOINT PARA GERAR GRÁFICO (SUBSTITUI O ANTIGO) ================
-// ==============================================================================
+// Endpoint para o usuário salvar sua escalação
+app.post("/escalacao", async (req, res) => {
+  const { email, team } = req.body;
+  if (!email || !team) {
+    return res.status(400).json({ message: "Email e time são obrigatórios." });
+  }
+  try {
+    const escalacaoJSON = JSON.stringify(team);
+    await db.query(
+      "UPDATE usuarios SET escalacao_atual = $1 WHERE email = $2",
+      [escalacaoJSON, email]
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Escalação salva com sucesso!" });
+  } catch (error) {
+    console.error("Erro ao salvar escalação:", error);
+    res.status(500).json({ message: "Erro interno ao salvar escalação." });
+  }
+});
 
+// --- LÓGICA DE MERCADO E RANKING ---
+app.post("/mercado/status", async (req, res) => {
+  // ... (lógica completa do mercado, já convertida para pg)
+  const { status } = req.body;
+  if (status !== "aberto" && status !== "fechado") {
+    return res.status(400).json({ message: "Status inválido." });
+  }
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    if (status === "fechado") {
+      await client.query("UPDATE mercado_status SET status = $1 WHERE id = 1", [
+        "fechado",
+      ]);
+      await client.query("COMMIT");
+      res
+        .status(200)
+        .json({ message: "Mercado fechado! As escalações estão travadas." });
+    } else {
+      const usuariosResult = await client.query(
+        "SELECT id, escalacao_atual FROM usuarios WHERE escalacao_atual IS NOT NULL"
+      );
+      for (const usuario of usuariosResult.rows) {
+        const escalacao = JSON.parse(usuario.escalacao_atual);
+        const idsJogadoras = Object.values(escalacao)
+          .filter((j) => j)
+          .map((j) => j.id);
+        if (idsJogadoras.length === 0) continue;
+        const placeholders = idsJogadoras.map((_, i) => `$${i + 1}`).join(",");
+        const pontuacaoResult = await client.query(
+          `SELECT SUM(pontuacao) as total_pontos_rodada FROM jogadoras WHERE id IN (${placeholders})`,
+          idsJogadoras
+        );
+        const total_pontos_rodada = pontuacaoResult.rows[0].total_pontos_rodada;
+        if (total_pontos_rodada) {
+          await client.query(
+            "UPDATE usuarios SET pontuacao_total = pontuacao_total + $1 WHERE id = $2",
+            [total_pontos_rodada, usuario.id]
+          );
+        }
+      }
+      await client.query(
+        "UPDATE jogadoras SET gols=0, assistencias=0, finalizacoes=0, desarmes=0, defesas=0, gol_sofrido=0, cartao_amarelo=0, cartao_vermelho=0, pontuacao=0"
+      );
+      await client.query("UPDATE usuarios SET escalacao_atual = NULL");
+      await client.query("UPDATE mercado_status SET status = $1 WHERE id = 1", [
+        "aberto",
+      ]);
+      await client.query("COMMIT");
+      res
+        .status(200)
+        .json({
+          message: "Ranking atualizado! Mercado aberto para a nova rodada.",
+        });
+    }
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Erro ao processar o mercado:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/mercado/status", async (req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT status FROM mercado_status WHERE id = 1"
+    );
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Erro ao buscar status do mercado." });
+  }
+});
+
+app.get("/ranking", async (req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT nome_time, pontuacao_total FROM usuarios ORDER BY pontuacao_total DESC LIMIT 10"
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: "Erro ao buscar o ranking." });
+  }
+});
+
+// --- ENDPOINTS PARA O SERVIÇO DE IOT ---
+app.post("/jogadoras/:id/stats-fisicas", async (req, res) => {
+  const { id } = req.params;
+  const { passos, distanciaMetros } = req.body;
+  try {
+    await db.query(
+      `UPDATE jogadoras SET passos_total = $1, distancia_km = $2 WHERE id = $3`,
+      [passos, (distanciaMetros / 1000).toFixed(2), id]
+    );
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: `Estatísticas da jogadora ${id} atualizadas.`,
+      });
+  } catch (error) {
+    console.error("Erro ao atualizar estatísticas físicas:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  }
+});
+
+app.get("/jogadoras/:id/stats-fisicas", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query(
+      "SELECT nome, passos_total, distancia_km FROM jogadoras WHERE id = $1",
+      [id]
+    );
+    if (result.rows.length > 0) {
+      res.status(200).json(result.rows[0]);
+    } else {
+      res.status(404).json({ message: "Jogadora não encontrada." });
+    }
+  } catch (error) {
+    console.error("Erro ao buscar estatísticas físicas:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  }
+});
+
+// --- ENDPOINT PARA GERAR GRÁFICO EM JS ---
 app.get("/math-stats-image", async (req, res) => {
   try {
-    // 1. Simulação de Dados (equivalente ao numpy)
     const x = [];
     const y = [];
     for (let i = 0; i < 50; i++) {
       const randomX = Math.random() * 10;
       x.push(randomX);
-      // y = 2x + 1 + ruído
       y.push(2 * randomX + 1 + (Math.random() - 0.5) * 4);
     }
-
-    // 2. Modelo de Regressão Linear (equivalente ao scikit-learn)
     const regression = new SimpleLinearRegression(x, y);
-
-    // Prepara os pontos para a linha de regressão
-    const linePoints = x.map((val) => ({ x: val, y: regression.predict(val) }));
-
-    // 3. Geração do Gráfico (equivalente ao matplotlib)
+    const linePoints = x
+      .sort((a, b) => a - b)
+      .map((val) => ({ x: val, y: regression.predict(val) }));
     const width = 800;
     const height = 480;
     const chartJSNodeCanvas = new ChartJSNodeCanvas({
@@ -278,7 +427,6 @@ app.get("/math-stats-image", async (req, res) => {
       height,
       backgroundColour: "white",
     });
-
     const configuration = {
       type: "scatter",
       data: {
@@ -293,9 +441,7 @@ app.get("/math-stats-image", async (req, res) => {
             data: linePoints,
             type: "line",
             borderColor: "rgba(255, 99, 132, 1)",
-            backgroundColor: "rgba(255, 99, 132, 0.2)",
             fill: false,
-            tension: 0.1,
             pointRadius: 0,
           },
         ],
@@ -305,21 +451,14 @@ app.get("/math-stats-image", async (req, res) => {
           x: {
             title: { display: true, text: "Métricas (Ex: Minutos Jogados)" },
           },
-          y: {
-            title: { display: true, text: "Pontuação" },
-          },
+          y: { title: { display: true, text: "Pontuação" } },
         },
         plugins: {
-          title: {
-            display: true,
-            text: "Análise de Desempenho da Jogadora",
-          },
+          title: { display: true, text: "Análise de Desempenho da Jogadora" },
         },
       },
     };
-
     const imageBuffer = await chartJSNodeCanvas.renderToBuffer(configuration);
-
     res.setHeader("Content-Type", "image/png");
     res.send(imageBuffer);
   } catch (error) {
@@ -334,48 +473,25 @@ const initialize = async () => {
     await db.connect();
     console.log("✅ Conectado à base de dados PostgreSQL!");
 
-    // Cria as tabelas se elas não existirem
     await db.query(`
       CREATE TABLE IF NOT EXISTS usuarios (
-        id SERIAL PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        senha TEXT NOT NULL,
-        nome_time TEXT,
-        pontuacao_total REAL DEFAULT 0,
-        escalacao_atual TEXT
-      );
-    `);
+        id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, senha TEXT NOT NULL,
+        nome_time TEXT, pontuacao_total REAL DEFAULT 0, escalacao_atual TEXT
+      );`);
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS jogadoras (
-        id SERIAL PRIMARY KEY,
-        nome TEXT NOT NULL,
-        numero_camisa INT,
-        posicao TEXT,
-        url_imagem TEXT,
-        nome_time TEXT,
-        gols INT DEFAULT 0,
-        assistencias INT DEFAULT 0,
-        finalizacoes INT DEFAULT 0,
-        desarmes INT DEFAULT 0,
-        defesas INT DEFAULT 0,
-        gol_sofrido INT DEFAULT 0,
-        cartao_amarelo INT DEFAULT 0,
-        cartao_vermelho INT DEFAULT 0,
-        pontuacao REAL DEFAULT 0,
-        passos_total INT DEFAULT 0,
-        distancia_km REAL DEFAULT 0
-      );
-    `);
+        id SERIAL PRIMARY KEY, nome TEXT NOT NULL, numero_camisa INT, posicao TEXT,
+        url_imagem TEXT, nome_time TEXT, gols INT DEFAULT 0, assistencias INT DEFAULT 0,
+        finalizacoes INT DEFAULT 0, desarmes INT DEFAULT 0, defesas INT DEFAULT 0,
+        gol_sofrido INT DEFAULT 0, cartao_amarelo INT DEFAULT 0, cartao_vermelho INT DEFAULT 0,
+        pontuacao REAL DEFAULT 0, passos_total INT DEFAULT 0, distancia_km REAL DEFAULT 0
+      );`);
 
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS mercado_status (
-        id INT PRIMARY KEY,
-        status TEXT NOT NULL
-      );
-    `);
+    await db.query(
+      `CREATE TABLE IF NOT EXISTS mercado_status (id INT PRIMARY KEY, status TEXT NOT NULL);`
+    );
 
-    // Garante que o mercado tenha um status inicial
     const mercado = await db.query("SELECT * FROM mercado_status WHERE id = 1");
     if (mercado.rows.length === 0) {
       await db.query(
@@ -384,7 +500,7 @@ const initialize = async () => {
     }
 
     app.listen(port, () => {
-      console.log(`✅ Backend rodando em http://localhost:${port}`);
+      console.log(`✅ Backend rodando na porta ${port}`);
     });
   } catch (error) {
     console.error(
