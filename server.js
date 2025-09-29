@@ -10,7 +10,6 @@ import { fileURLToPath } from "url";
 // Importações para o Mercado Pago e variáveis de ambiente
 import { MercadoPagoConfig, Preference } from "mercadopago";
 import dotenv from "dotenv";
-import fetch from "node-fetch"; // Importa o node-fetch
 
 // Configuração de diretórios
 const __filename = fileURLToPath(import.meta.url);
@@ -41,7 +40,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- ENDPOINTS PADRÕES (Criação de Preferência, Jogadoras, Cadastro, Login, etc.) ---
+// --- ENDPOINTS ---
 
 // Endpoint de pagamento (Mercado Pago)
 app.post("/create_preference", async (req, res) => {
@@ -117,7 +116,7 @@ app.post("/jogadoras", upload.array("imagens", 15), async (req, res) => {
   }
 });
 
-// Endpoint para atualizar estatísticas e pontuação de uma jogadora
+// Endpoint para atualizar estatísticas de JOGO de uma jogadora
 app.put("/jogadoras/:id/stats", async (req, res) => {
   const { id } = req.params;
   const {
@@ -254,7 +253,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Endpoint para o usuário salvar sua escalação no banco de dados
+// Endpoint para o usuário salvar sua escalação
 app.post("/escalacao", async (req, res) => {
   const { email, team } = req.body;
   if (!email || !team) {
@@ -275,10 +274,7 @@ app.post("/escalacao", async (req, res) => {
   }
 });
 
-// ===================================================================================
-// ===== NOVA LÓGICA DE MERCADO, PONTUAÇÃO E RANKING (INÍCIO) =======================
-// ===================================================================================
-
+// --- LÓGICA DE MERCADO E RANKING ---
 app.post("/mercado/status", async (req, res) => {
   const { status } = req.body;
   if (status !== "aberto" && status !== "fechado") {
@@ -286,35 +282,14 @@ app.post("/mercado/status", async (req, res) => {
   }
 
   try {
-    // Inicia uma transação para garantir que todas as operações sejam bem-sucedidas ou nenhuma seja.
     await db.exec("BEGIN TRANSACTION");
-
     if (status === "fechado") {
-      // ============================================================
-      // ===== LÓGICA PARA FECHAR O MERCADO =========================
-      // ============================================================
-      // Quando o mercado fecha, a única ação é MUDAR O STATUS.
-      // Isso "fotografa" a escalação de todos os usuários, impedindo que eles a alterem.
-      // A pontuação das jogadoras PODE SER ATUALIZADA pelo admin enquanto o mercado está fechado.
-
       await db.run('UPDATE mercado_status SET status = "fechado" WHERE id = 1');
-
-      // Confirma a transação, pois a única operação foi concluída com sucesso.
       await db.exec("COMMIT");
       res
         .status(200)
-        .json({
-          message:
-            "Mercado fechado! As escalações estão travadas. Agora você pode atualizar a pontuação das jogadoras.",
-        });
+        .json({ message: "Mercado fechado! As escalações estão travadas." });
     } else {
-      // status === 'aberto'
-      // ============================================================
-      // ===== LÓGICA PARA ABRIR O MERCADO (APURAÇÃO) ===============
-      // ============================================================
-      // Esta é a ação mais complexa. Ela executa toda a apuração da rodada anterior antes de preparar para a próxima.
-
-      // 1. Calcular a pontuação da rodada para cada usuário e somar ao seu total.
       const usuarios = await db.all(
         "SELECT id, escalacao_atual FROM usuarios WHERE escalacao_atual IS NOT NULL"
       );
@@ -323,17 +298,12 @@ app.post("/mercado/status", async (req, res) => {
         const idsJogadoras = Object.values(escalacao)
           .filter((j) => j)
           .map((j) => j.id);
-
-        if (idsJogadoras.length === 0) continue; // Pula se o usuário não escalou ninguém
-
-        // Busca a soma dos pontos APENAS das jogadoras que o usuário escalou
+        if (idsJogadoras.length === 0) continue;
         const placeholders = idsJogadoras.map(() => "?").join(",");
         const { total_pontos_rodada } = await db.get(
           `SELECT SUM(pontuacao) as total_pontos_rodada FROM jogadoras WHERE id IN (${placeholders})`,
           idsJogadoras
         );
-
-        // Adiciona os pontos da rodada ao placar geral do usuário
         if (total_pontos_rodada) {
           await db.run(
             "UPDATE usuarios SET pontuacao_total = pontuacao_total + ? WHERE id = ?",
@@ -341,19 +311,11 @@ app.post("/mercado/status", async (req, res) => {
           );
         }
       }
-
-      // 2. ZERAR a pontuação de TODAS as jogadoras para a próxima rodada.
       await db.run(
         "UPDATE jogadoras SET gols = 0, assistencias = 0, finalizacoes = 0, desarmes = 0, defesas = 0, gol_sofrido = 0, cartao_amarelo = 0, cartao_vermelho = 0, pontuacao = 0"
       );
-
-      // 3. LIMPAR a escalação de TODOS os usuários, forçando-os a escalar novamente.
       await db.run("UPDATE usuarios SET escalacao_atual = NULL");
-
-      // 4. Mudar o status para "aberto" no banco de dados.
       await db.run('UPDATE mercado_status SET status = "aberto" WHERE id = 1');
-
-      // Confirma todas as operações da transação.
       await db.exec("COMMIT");
       res
         .status(200)
@@ -362,21 +324,12 @@ app.post("/mercado/status", async (req, res) => {
         });
     }
   } catch (error) {
-    // Se qualquer erro ocorrer em qualquer uma das etapas acima, a transação inteira é revertida.
     await db.exec("ROLLBACK");
-    console.error("Erro ao processar o mercado (transação revertida):", error);
-    res
-      .status(500)
-      .json({
-        message: "Erro interno no servidor. Nenhuma alteração foi salva.",
-      });
+    console.error("Erro ao processar o mercado:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
-// ===================================================================================
-// ===== NOVA LÓGICA DE MERCADO, PONTUAÇÃO E RANKING (FIM) ===========================
-// ===================================================================================
 
-// Endpoint para buscar status do mercado
 app.get("/mercado/status", async (req, res) => {
   try {
     const row = await db.get("SELECT status FROM mercado_status WHERE id = 1");
@@ -386,7 +339,6 @@ app.get("/mercado/status", async (req, res) => {
   }
 });
 
-// Endpoint para buscar o ranking
 app.get("/ranking", async (req, res) => {
   try {
     const ranking = await db.all(
@@ -398,29 +350,54 @@ app.get("/ranking", async (req, res) => {
   }
 });
 
-// Endpoint para servir como proxy para a GNews API
-app.get("/noticias", async (req, res) => {
-  const API_KEY = process.env.GNEWS_API_KEY;
-  if (!API_KEY) {
+// ==============================================================================
+// ===== ENDPOINTS PARA O SERVIÇO DE IOT ========================================
+// ==============================================================================
+
+// Endpoint POST para o serviço Python ENVIAR os dados do sensor
+app.post("/jogadoras/:id/stats-fisicas", async (req, res) => {
+  const { id } = req.params;
+  const { passos, distanciaMetros } = req.body;
+
+  if (passos === undefined || distanciaMetros === undefined) {
     return res
-      .status(500)
-      .json({ message: "Chave da GNews API não configurada no backend." });
+      .status(400)
+      .json({ message: "Dados de passos e distância são obrigatórios." });
   }
 
-  const QUERY =
-    '"Brasileirão Feminino" OR "NWSL" OR "Liga F" OR "FA WSL" OR "Champions League Feminina"';
-  const API_URL = `https://gnews.io/api/v4/search?q=${encodeURIComponent(
-    QUERY
-  )}&lang=pt&category=sports&apikey=${API_KEY}`;
-
   try {
-    // Usando o node-fetch importado
-    const apiResponse = await fetch(API_URL);
-    const data = await apiResponse.json();
-    res.status(200).json(data);
+    await db.run(
+      `UPDATE jogadoras SET passos_total = ?, distancia_km = ? WHERE id = ?`,
+      [passos, (distanciaMetros / 1000).toFixed(2), id]
+    );
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: `Estatísticas da jogadora ${id} atualizadas.`,
+      });
   } catch (error) {
-    console.error("Erro ao buscar notícias da GNews:", error);
-    res.status(500).json({ message: "Erro ao buscar notícias." });
+    console.error("Erro ao atualizar estatísticas físicas:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  }
+});
+
+// Endpoint GET para o frontend LER os dados do sensor
+app.get("/jogadoras/:id/stats-fisicas", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const stats = await db.get(
+      "SELECT nome, passos_total, distancia_km FROM jogadoras WHERE id = ?",
+      [id]
+    );
+    if (stats) {
+      res.status(200).json(stats);
+    } else {
+      res.status(404).json({ message: "Jogadora não encontrada." });
+    }
+  } catch (error) {
+    console.error("Erro ao buscar estatísticas físicas:", error);
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
@@ -432,27 +409,38 @@ app.get("/noticias", async (req, res) => {
       driver: sqlite3.verbose().Database,
     });
 
-    // Tabela de usuários com pontuação e escalação
     await db.exec(
       `CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, email TEXT UNIQUE, senha TEXT, nome_time TEXT, pontuacao_total REAL DEFAULT 0, escalacao_atual TEXT)`
     );
-
-    // Tabela de jogadoras com todas as estatísticas
     await db.exec(
       `CREATE TABLE IF NOT EXISTS jogadoras (id INTEGER PRIMARY KEY, nome TEXT, numero_camisa INTEGER, posicao TEXT, url_imagem TEXT, nome_time TEXT, gols INTEGER DEFAULT 0, assistencias INTEGER DEFAULT 0, finalizacoes INTEGER DEFAULT 0, desarmes INTEGER DEFAULT 0, defesas INTEGER DEFAULT 0, gol_sofrido INTEGER DEFAULT 0, cartao_amarelo INTEGER DEFAULT 0, cartao_vermelho INTEGER DEFAULT 0, pontuacao REAL DEFAULT 0)`
     );
-
-    // Tabela de status do mercado
     await db.exec(
       `CREATE TABLE IF NOT EXISTS mercado_status (id INTEGER PRIMARY KEY, status TEXT NOT NULL)`
     );
 
-    // Garante que o mercado tenha um status inicial
     const mercado = await db.get("SELECT * FROM mercado_status");
     if (!mercado) {
       await db.run(
         'INSERT INTO mercado_status (id, status) VALUES (1, "aberto")'
       );
+    }
+
+    // Adiciona as colunas para estatísticas físicas se elas ainda não existirem.
+    try {
+      await db.exec(
+        "ALTER TABLE jogadoras ADD COLUMN passos_total INTEGER DEFAULT 0"
+      );
+      await db.exec(
+        "ALTER TABLE jogadoras ADD COLUMN distancia_km REAL DEFAULT 0"
+      );
+      console.log(
+        "✅ Colunas de estatísticas físicas (passos, distância) garantidas na tabela."
+      );
+    } catch (e) {
+      if (!e.message.includes("duplicate column name")) {
+        console.error("❌ Erro ao adicionar colunas de estatísticas:", e);
+      }
     }
 
     app.listen(port, () => {
