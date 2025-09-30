@@ -1,4 +1,5 @@
 from flask import Flask, send_file
+from flask_cors import CORS # // NOVA LINHA
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
@@ -6,6 +7,7 @@ import io
 import os
 
 app = Flask(__name__)
+CORS(app) # // NOVA LINHA: Habilita o CORS para toda a aplicação
 
 @app.route('/generate-plot', methods=['GET'])
 def generate_plot():

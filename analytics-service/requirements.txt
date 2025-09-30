@@ -1,5 +1,6 @@
 Flask
+Flask-Cors
 numpy
 matplotlib
 scikit-learn
-gunicorn 
+gunicorn
