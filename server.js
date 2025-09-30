@@ -32,15 +32,13 @@ const db = new Pool({
 });
 
 // --- Middlewares ---
-const corsOptions = {
-  origin: [
-    'https://passa-pra-ela-oficial.vercel.app', // Domínio de produção
-    'http://localhost:5173' // Se ainda quiser testar localmente
-    // Adicione outras URLs se necessário
-  ],
-  optionsSuccessStatus: 200 
-};
-app.use(cors(corsOptions));
+app.use(cors({
+  origin: 'https://passa-pra-ela-oficial.vercel.app',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
+}));
+
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "images")));
 
