@@ -22,31 +22,16 @@ const port = process.env.PORT || 3001;
 let db;
 
 // --- Middlewares ---
-const allowedOrigins = [
-  'https://passa-pra-ela-oficial.vercel.app'
-];
+// --- Middlewares ---
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-
-// Aplica o middleware de CORS com as opções definidas
-// Esta única linha é suficiente para lidar com tudo, incluindo os pedidos OPTIONS
-app.use(cors(corsOptions));
+// ATENÇÃO: Configuração de teste para depurar o CORS.
+// Isto permite pedidos de QUALQUER origem.
+app.use(cors());
 
 // Os seus outros middlewares vêm depois
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "images")));
+
 
 // --- Configuração do Multer para Upload de Imagens ---
 const storage = multer.diskStorage({
