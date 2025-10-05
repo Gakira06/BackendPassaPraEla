@@ -5,6 +5,7 @@ import cors from "cors";
 import bcrypt from "bcrypt";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { MercadoPagoConfig, Preference } from "mercadopago";
 import dotenv from "dotenv";
@@ -46,8 +47,12 @@ app.use("/images", express.static(path.join(__dirname, "images")));
 
 // --- Configuração do Multer (sem alterações) ---
 const storage = multer.diskStorage({
-  destination: (req, file, cb) =>
-    cb(null, path.join(__dirname, "images/players/")),
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, "images/players/");
+    // Cria o diretório se ele não existir
+    fs.mkdirSync(uploadPath, { recursive: true }); 
+    cb(null, uploadPath);
+  },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     cb(
