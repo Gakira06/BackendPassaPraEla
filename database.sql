@@ -1,3 +1,5 @@
+-- Serve so para organização de montagem não esta sendo usada para o produto em si
+
 CREATE TABLE jogadoras (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome VARCHAR(255) NOT NULL,
