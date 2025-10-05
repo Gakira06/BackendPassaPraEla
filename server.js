@@ -22,11 +22,31 @@ const port = process.env.PORT || 3001;
 let db;
 
 // --- Middlewares ---
-// --- Middlewares ---
 
-// ATENÇÃO: Configuração de teste para depurar o CORS.
-// Isto permite pedidos de QUALQUER origem.
-app.use(cors());
+// Middleware de CORS manual para garantir que os cabeçalhos são definidos
+app.use((req, res, next) => {
+  // Define a origem permitida. Use '*' se quiser testar de forma aberta.
+  res.setHeader('Access-Control-Allow-Origin', 'https://passa-pra-ela-oficial.vercel.app');
+  
+  // Define os métodos permitidos
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  
+  // Define os cabeçalhos permitidos
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  // Permite o envio de credenciais (cookies, etc.)
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  // O navegador envia um pedido OPTIONS primeiro (pre-flight).
+  // Se o método for OPTIONS, respondemos com 200 OK e os cabeçalhos acima.
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  // Se não for um pedido OPTIONS, continua para as outras rotas.
+  next();
+});
+
 
 // Os seus outros middlewares vêm depois
 app.use(express.json());
