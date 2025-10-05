@@ -22,7 +22,35 @@ const port = process.env.PORT || 3001;
 let db;
 
 // --- Middlewares ---
-app.use(cors());
+const allowedOrigins = [
+  'https://passa-pra-ela-oficial.vercel.app'
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Permite pedidos sem 'origin' (ex: apps móveis, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'A política de CORS para este site não permite acesso a partir da Origem especificada.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200 // Para compatibilidade com navegadores mais antigos
+};
+
+
+app.use(cors(corsOptions));
+
+// Lida com os pedidos pre-flight para todas as rotas
+app.options('*', cors(corsOptions));
+
+
+// Os seus outros middlewares vêm depois
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "images")));
 
