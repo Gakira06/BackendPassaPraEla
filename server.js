@@ -28,27 +28,21 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Permite pedidos sem 'origin' (ex: apps móveis, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'A política de CORS para este site não permite acesso a partir da Origem especificada.';
-      return callback(new Error(msg), false);
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
     }
-    return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  optionsSuccessStatus: 200 // Para compatibilidade com navegadores mais antigos
+  optionsSuccessStatus: 200
 };
 
-
+// Aplica o middleware de CORS com as opções definidas
+// Esta única linha é suficiente para lidar com tudo, incluindo os pedidos OPTIONS
 app.use(cors(corsOptions));
-
-// Lida com os pedidos pre-flight para todas as rotas
-app.options('*', cors(corsOptions));
-
 
 // Os seus outros middlewares vêm depois
 app.use(express.json());
